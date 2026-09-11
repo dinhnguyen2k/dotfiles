@@ -1,6 +1,8 @@
 local wezterm = require("wezterm")
 local act = wezterm.action
 
+local trigger_lunch_popup = nil
+
 local config = wezterm.config_builder()
 
 -- 1. Cấu hình tự động vào WSL Ubuntu và thư mục cogain-core
@@ -193,6 +195,43 @@ local function smooth_pane_switch(direction)
   end)
 end
 
+-- =========================================================
+-- 📋 CẤU HÌNH BỘ ĐỆM & SAO CHÉP (SMART COPY & CLIPBOARD)
+-- =========================================================
+local copy_mode_selecting = false
+
+local function activate_copy_mode()
+  return wezterm.action_callback(function(window, pane)
+    copy_mode_selecting = false
+    window:perform_action(act.ActivateCopyMode, pane)
+  end)
+end
+
+local function shift_move(direction)
+  return wezterm.action_callback(function(window, pane)
+    if not copy_mode_selecting then
+      copy_mode_selecting = true
+      window:perform_action(act.CopyMode { SetSelectionMode = "Cell" }, pane)
+    end
+    window:perform_action(act.CopyMode(direction), pane)
+  end)
+end
+
+local function copy_and_close()
+  return wezterm.action_callback(function(window, pane)
+    copy_mode_selecting = false
+    window:perform_action(act.CopyTo("ClipboardAndPrimarySelection"), pane)
+    window:perform_action(act.CopyMode("Close"), pane)
+  end)
+end
+
+local function close_copy_mode()
+  return wezterm.action_callback(function(window, pane)
+    copy_mode_selecting = false
+    window:perform_action(act.CopyMode("Close"), pane)
+  end)
+end
+
 config.keys = {
   -- Cuộn trang (Scrollback)
   { key = "UpArrow", mods = "SHIFT", action = act.ScrollByLine(-3) },
@@ -201,13 +240,22 @@ config.keys = {
   { key = "PageDown", mods = "SHIFT", action = act.ScrollByPage(1) },
   { key = "PageUp", mods = "NONE", action = act.ScrollByPage(-1) },
   { key = "PageDown", mods = "NONE", action = act.ScrollByPage(1) },
-  { key = "x", mods = "CTRL|SHIFT", action = act.ActivateCopyMode },
-  { key = "[", mods = "LEADER", action = act.ActivateCopyMode },
+  { key = "x", mods = "CTRL|SHIFT", action = activate_copy_mode() },
+  { key = "[", mods = "LEADER", action = activate_copy_mode() },
   { key = "Space", mods = "CTRL|SHIFT", action = act.QuickSelect },
 
   -- Nạp lại cấu hình: Ctrl + Shift + R hoặc Leader + r (Ctrl + Space rồi r)
   { key = "r", mods = "LEADER", action = act.ReloadConfiguration },
   { key = "r", mods = "CTRL|SHIFT", action = act.ReloadConfiguration },
+
+  -- Test popup cơm trưa ngay lập tức: Leader + l (Ctrl + Space rồi bấm l)
+  {
+    key = "l",
+    mods = "LEADER",
+    action = wezterm.action_callback(function(window, pane)
+      trigger_lunch_popup()
+    end),
+  },
 
   -- Nhấn phím Space ngay sau Leader để gửi trực tiếp Ctrl + Space vào Terminal (dùng cho Neovim AutoComplete)
   { key = "Space", mods = "LEADER|CTRL", action = act.SendKey({ key = "Space", mods = "CTRL" }) },
@@ -215,6 +263,23 @@ config.keys = {
 
   -- Xóa nhanh 1 từ phía trước (Ctrl + Backspace)
   { key = "Backspace", mods = "CTRL", action = act.SendKey({ key = "w", mods = "CTRL" }) },
+
+  -- Sao chép thông minh (Ctrl + C): Bôi đen -> copy vào Clipboard, không bôi đen -> gửi Ctrl + C (ngắt lệnh / SIGINT)
+  {
+    key = "c",
+    mods = "CTRL",
+    action = wezterm.action_callback(function(window, pane)
+      local sel = window:get_selection_text_for_pane(pane)
+      if sel and sel ~= "" then
+        window:perform_action(act.CopyTo("ClipboardAndPrimarySelection"), pane)
+        window:perform_action(act.ClearSelection, pane)
+      else
+        window:perform_action(act.SendKey({ key = "c", mods = "CTRL" }), pane)
+      end
+    end),
+  },
+  -- Phím copy chuẩn của Terminal (Ctrl + Shift + C)
+  { key = "c", mods = "CTRL|SHIFT", action = act.CopyTo("ClipboardAndPrimarySelection") },
 
   -- Dán từ Clipboard (Ctrl + V)
   { key = "v", mods = "CTRL", action = act.PasteFrom("Clipboard") },
@@ -233,6 +298,10 @@ config.keys = {
   { key = "s", mods = "LEADER", action = act.SplitVertical({ domain = "CurrentPaneDomain" }) },
   -- Xem tiến trình CPU / RAM nhanh: Ctrl + a rồi bấm t để mở top
   { key = "t", mods = "LEADER", action = act.SplitVertical({ domain = "CurrentPaneDomain", args = { "top" } }) },
+  -- Mở sân khấu Chim cánh cụt lẹt bẹt mini: Leader + P (Ctrl + Space rồi Shift + P)
+  { key = "P", mods = "LEADER", action = act.SplitPane({ direction = "Down", size = { Cells = 8 }, command = { args = { "penguin" } } }) },
+
+
 
   -- Zoom toàn màn hình 1 ô: Ctrl + a rồi bấm z
   { key = "z", mods = "LEADER", action = act.TogglePaneZoomState },
@@ -272,13 +341,31 @@ config.mouse_bindings = {
     mods = "NONE",
     action = act.ScrollByCurrentEventWheelDelta,
   },
-  -- Bôi đen là tự copy
+  -- Bôi đen (kéo chuột 1 lần) là tự động copy vào Clipboard
   {
     event = { Up = { streak = 1, button = "Left" } },
     mods = "NONE",
-    action = act.CompleteSelectionOrOpenLinkAtMouseCursor("ClipboardAndPrimarySelection"),
+    action = act.CompleteSelection("ClipboardAndPrimarySelection"),
   },
-  -- Chuột phải là paste
+  -- Nhấp đúp chuột (chọn 1 từ) là tự động copy vào Clipboard
+  {
+    event = { Up = { streak = 2, button = "Left" } },
+    mods = "NONE",
+    action = act.CompleteSelection("ClipboardAndPrimarySelection"),
+  },
+  -- Nhấp 3 lần chuột (chọn cả dòng) là tự động copy vào Clipboard
+  {
+    event = { Up = { streak = 3, button = "Left" } },
+    mods = "NONE",
+    action = act.CompleteSelection("ClipboardAndPrimarySelection"),
+  },
+  -- Mở liên kết (URL / Link) khi giữ Ctrl và click chuột trái
+  {
+    event = { Up = { streak = 1, button = "Left" } },
+    mods = "CTRL",
+    action = act.OpenLinkAtMouseCursor,
+  },
+  -- Chuột phải là paste từ Clipboard
   {
     event = { Down = { streak = 1, button = "Right" } },
     mods = "NONE",
@@ -425,7 +512,150 @@ wezterm.on("format-tab-title", function(tab, tabs, panes, config, hover, max_wid
   end
 end)
 
+-- 🍱 CẤU HÌNH NHẮC NHỞ CƠM TRƯA (FUNNY MODE)
+local lunch_quotes = {
+  "Bug không tự hết nhưng đói thì run tay đấy! Dậy ăn cơm 🍚",
+  "Code cả đời chứ không ai nhịn ăn được cả đời, đi ăn thôi sếp! 🍱",
+  "CẢNH BÁO: Tụt đường huyết cấp độ 5! Cần nạp tinh bột khẩn cấp ⚠️",
+  "Cơm sườn 35k đang vẫy gọi, git stash rồi đứng dậy ngay! 🥩",
+  "Hôm nay ăn gì? Nghĩ lâu là hết chỗ ngồi đấy bro 🍜",
+  "Fix bug có thể đợi, dạ dày thì không! 🏃‍♂️💨",
+}
+local food_icons = { "🍱", "🍜", "🥩", "🍕", "🍗", "🍲", "🍛", "🧋" }
+local last_lunch_notified_key = nil
+
+trigger_lunch_popup = function()
+  local script_path = "C:\\Users\\dinhn\\.config\\wezterm\\lunch_popup.ps1"
+  local ps_exe = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+  wezterm.background_child_process({
+    ps_exe,
+    "-NoProfile",
+    "-WindowStyle",
+    "Hidden",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    script_path,
+  })
+end
+
+-- =========================================================
+-- 🐧 CHIM CÁNH CỤT LẸT BẸT TRÊN THANH STATUS WEZTERM
+-- Chạy ngẫu nhiên, để lại dấu chấm chấm chân nhẹ nhàng vui vẻ
+-- =========================================================
+local penguin_pet = {
+  pos = 3,
+  dir = 1,
+  min_pos = 1,
+  max_pos = 7,
+  step_toggle = false,
+  state = "walk",
+  state_ticks = 0,
+}
+
+local function render_wezterm_penguin()
+  penguin_pet.step_toggle = not penguin_pet.step_toggle
+
+  if penguin_pet.state_ticks > 0 then
+    penguin_pet.state_ticks = penguin_pet.state_ticks - 1
+  else
+    local roll = math.random(1, 100)
+    if roll < 55 then
+      penguin_pet.state = "walk"
+      penguin_pet.state_ticks = math.random(6, 12)
+      if math.random(1, 10) <= 3 then
+        penguin_pet.dir = -penguin_pet.dir
+      end
+    elseif roll < 75 then
+      penguin_pet.state = "orchestrate"
+      penguin_pet.state_ticks = math.random(4, 7)
+    elseif roll < 86 then
+      penguin_pet.state = "slide"
+      penguin_pet.state_ticks = math.random(3, 5)
+    elseif roll < 94 then
+      penguin_pet.state = "look"
+      penguin_pet.state_ticks = math.random(3, 5)
+    else
+      penguin_pet.state = "sleep"
+      penguin_pet.state_ticks = math.random(4, 7)
+    end
+  end
+
+  local sound = ""
+  local icon = "🐧"
+
+  if penguin_pet.state == "walk" then
+    penguin_pet.pos = penguin_pet.pos + penguin_pet.dir
+    if penguin_pet.pos >= penguin_pet.max_pos then
+      penguin_pet.pos = penguin_pet.max_pos
+      penguin_pet.dir = -1
+    elseif penguin_pet.pos <= penguin_pet.min_pos then
+      penguin_pet.pos = penguin_pet.min_pos
+      penguin_pet.dir = 1
+    end
+    sound = penguin_pet.step_toggle and "lẹt..         " or "..bẹt         "
+    icon = "🐧"
+  elseif penguin_pet.state == "slide" then
+    penguin_pet.pos = penguin_pet.pos + (penguin_pet.dir * 2)
+    if penguin_pet.pos >= penguin_pet.max_pos then
+      penguin_pet.pos = penguin_pet.max_pos
+      penguin_pet.dir = -1
+    elseif penguin_pet.pos <= penguin_pet.min_pos then
+      penguin_pet.pos = penguin_pet.min_pos
+      penguin_pet.dir = 1
+    end
+    sound = "vèoo ⛷️       "
+    icon = "⛷️"
+  elseif penguin_pet.state == "orchestrate" then
+    sound = "orchestrate 🪄"
+    icon = "🐧"
+  elseif penguin_pet.state == "look" then
+    sound = "(•ө•)?        "
+    icon = "🐧"
+  elseif penguin_pet.state == "sleep" then
+    sound = "zZz..         "
+    icon = "💤"
+  end
+
+  local track = ""
+  for i = 1, penguin_pet.max_pos do
+    if i == penguin_pet.pos then
+      track = track .. icon
+    elseif penguin_pet.dir > 0 and i < penguin_pet.pos and (penguin_pet.pos - i) <= 2 then
+      track = track .. "·"
+    elseif penguin_pet.dir < 0 and i > penguin_pet.pos and (i - penguin_pet.pos) <= 2 then
+      track = track .. "·"
+    else
+      track = track .. " "
+    end
+  end
+
+  return track, sound
+end
+
 local function update_status_bar(window, pane)
+  local today = wezterm.strftime("%Y-%m-%d")
+  local hour = tonumber(wezterm.strftime("%H"))
+  local min = tonumber(wezterm.strftime("%M"))
+  local sec = tonumber(wezterm.strftime("%S")) or 0
+
+  -- ⏰ Kích hoạt đúng 12h trưa hàng ngày (12:00:00 - 12:59:59)
+  local is_lunch_time = (hour == 12)
+
+  local notify_key = today .. "-12h"
+  -- BẮN POPUP & NOTIFICATION KHI ĐẾN GIỜ (chỉ nổ 1 lần)
+  if is_lunch_time and last_lunch_notified_key ~= notify_key then
+    last_lunch_notified_key = notify_key
+    math.randomseed(os.time())
+    local quote = lunch_quotes[math.random(#lunch_quotes)]
+
+    -- 1. Bắn toast notification
+    window:toast_notification("🚨 CÒI BÁO ĐỘNG ĐÓI BỤNG", quote, nil, 8000)
+
+    -- 2. Hộp thoại modal nổ ra giữa màn hình có nút "Xác nhận" và "Close"
+    trigger_lunch_popup()
+  end
+
   -- 1. LEFT STATUS: Chế độ động (COPY MODE / LEADER / Thường)
   local left_elems = {}
   local key_table = window:active_key_table()
@@ -438,7 +668,7 @@ local function update_status_bar(window, pane)
     table.insert(left_elems, { Background = { Color = "#eed49f" } })
     table.insert(left_elems, { Foreground = { Color = "#191724" } })
     table.insert(left_elems, { Attribute = { Intensity = "Bold" } })
-    table.insert(left_elems, { Text = " 📋 COPY MODE | Shift+Mũi tên: bôi đen | Enter: copy | Esc: thoát " })
+    table.insert(left_elems, { Text = " 📋 COPY MODE | Shift+Mũi tên hoặc v: bôi đen | Enter/y/Ctrl+C: copy | Esc: thoát " })
     table.insert(left_elems, { Background = { Color = "none" } })
     table.insert(left_elems, { Foreground = { Color = "#eed49f" } })
     table.insert(left_elems, { Text = " " })
@@ -468,6 +698,24 @@ local function update_status_bar(window, pane)
     table.insert(left_elems, { Foreground = { Color = "#a6da95" } })
     table.insert(left_elems, { Text = " " })
     table.insert(left_elems, "ResetAttributes")
+
+    -- 🐧 Chú chim cánh cụt lẹt bẹt chạy trên thanh trạng thái
+    local p_track, p_sound = render_wezterm_penguin()
+    table.insert(left_elems, { Background = { Color = "none" } })
+    table.insert(left_elems, { Foreground = { Color = "#9ccfd8" } })
+    table.insert(left_elems, { Text = "" })
+    table.insert(left_elems, { Background = { Color = "#9ccfd8" } })
+    table.insert(left_elems, { Foreground = { Color = "#191724" } })
+    table.insert(left_elems, { Attribute = { Intensity = "Bold" } })
+    table.insert(left_elems, { Text = " " .. p_track .. " " })
+    table.insert(left_elems, { Background = { Color = "#232136" } })
+    table.insert(left_elems, { Foreground = { Color = "#f6c177" } })
+    table.insert(left_elems, { Attribute = { Intensity = "Bold" } })
+    table.insert(left_elems, { Text = " " .. p_sound .. " " })
+    table.insert(left_elems, { Background = { Color = "none" } })
+    table.insert(left_elems, { Foreground = { Color = "#232136" } })
+    table.insert(left_elems, { Text = " " })
+    table.insert(left_elems, "ResetAttributes")
   end
 
   if window.set_left_status then
@@ -486,6 +734,28 @@ local function update_status_bar(window, pane)
   table.insert(right_elems, { Attribute = { Intensity = "Bold" } })
   table.insert(right_elems, { Text = "nguyentd 🚀  " })
   table.insert(right_elems, "ResetAttributes")
+
+  -- 🍱 Pill cảnh báo cơm trưa nhảy múa vui nhộn
+  if is_lunch_time then
+    local current_icon = food_icons[(sec % #food_icons) + 1]
+    local alert_text = (sec % 2 == 0) and " ĐI ĂN CƠM THÔI! " or " ĐÓI QUÁ RỒI BRO! "
+
+    table.insert(right_elems, { Background = { Color = "none" } })
+    table.insert(right_elems, { Foreground = { Color = "#e06c75" } })
+    table.insert(right_elems, { Text = "" })
+    table.insert(right_elems, { Background = { Color = "#e06c75" } })
+    table.insert(right_elems, { Foreground = { Color = "#191724" } })
+    table.insert(right_elems, { Attribute = { Intensity = "Bold" } })
+    table.insert(right_elems, { Text = current_icon .. " " })
+    table.insert(right_elems, { Background = { Color = "#282c34" } })
+    table.insert(right_elems, { Foreground = { Color = "#e5c07b" } })
+    table.insert(right_elems, { Attribute = { Intensity = "Bold" } })
+    table.insert(right_elems, { Text = alert_text })
+    table.insert(right_elems, { Background = { Color = "none" } })
+    table.insert(right_elems, { Foreground = { Color = "#282c34" } })
+    table.insert(right_elems, { Text = " " })
+    table.insert(right_elems, "ResetAttributes")
+  end
 
   -- Git Branch Pill (nếu có)
   local user_vars = pane:get_user_vars() or {}
@@ -515,19 +785,6 @@ local function update_status_bar(window, pane)
   local time_str = wezterm.strftime("%H:%M")
   append_elements(right_elems, make_solid_pill("", time_str, "#b4befe"))
 
-  -- AI Token Pills (nếu có)
-  local agy = read_json_file(".agy_usage.json")
-  if agy and agy.est_tokens then
-    local toks = string.format("%.1fk", agy.est_tokens / 1000)
-    local model = agy.model or "Gemini"
-    append_elements(right_elems, make_solid_pill("🤖", model .. " " .. toks, "#c4a7e7"))
-  end
-
-  local claude = read_json_file(".claude_usage.json")
-  if claude and claude.est_tokens then
-    local toks = string.format("%.1fk", claude.est_tokens / 1000)
-    append_elements(right_elems, make_solid_pill("🧠", "Claude " .. toks, "#89b4fa"))
-  end
 
   if window.set_right_status then
     local ok_right, right_fmt = pcall(wezterm.format, right_elems)
@@ -543,23 +800,46 @@ wezterm.on("update-status", update_status_bar)
 wezterm.on("update-right-status", update_status_bar)
 
 -- =========================================================
--- 🌟 KEY TABLES: CẤU HÌNH COPY MODE (BÔI ĐEN BẰNG SHIFT + MŨI TÊN)
+-- 🌟 KEY TABLES: CẤU HÌNH COPY MODE (BÔI ĐEN VÀ COPY VÀO CLIPBOARD)
 -- =========================================================
 local copy_mode = wezterm.gui.default_key_tables().copy_mode
 
--- Hỗ trợ Shift + Mũi tên: Tự động kích hoạt chọn ký tự và kéo vùng bôi đen (như VS Code/Word)
-table.insert(copy_mode, { key = "LeftArrow", mods = "SHIFT", action = act.Multiple { act.CopyMode { SetSelectionMode = "Cell" }, act.CopyMode "MoveLeft" } })
-table.insert(copy_mode, { key = "RightArrow", mods = "SHIFT", action = act.Multiple { act.CopyMode { SetSelectionMode = "Cell" }, act.CopyMode "MoveRight" } })
-table.insert(copy_mode, { key = "UpArrow", mods = "SHIFT", action = act.Multiple { act.CopyMode { SetSelectionMode = "Cell" }, act.CopyMode "MoveUp" } })
-table.insert(copy_mode, { key = "DownArrow", mods = "SHIFT", action = act.Multiple { act.CopyMode { SetSelectionMode = "Cell" }, act.CopyMode "MoveDown" } })
+-- Hỗ trợ Shift + Mũi tên: Tự động kích hoạt chọn ở lần bấm đầu và kéo dài vùng bôi đen liên tục
+table.insert(copy_mode, { key = "LeftArrow", mods = "SHIFT", action = shift_move("MoveLeft") })
+table.insert(copy_mode, { key = "RightArrow", mods = "SHIFT", action = shift_move("MoveRight") })
+table.insert(copy_mode, { key = "UpArrow", mods = "SHIFT", action = shift_move("MoveUp") })
+table.insert(copy_mode, { key = "DownArrow", mods = "SHIFT", action = shift_move("MoveDown") })
 
 -- Bôi đen nhanh cả trang với Shift + PageUp / PageDown
-table.insert(copy_mode, { key = "PageUp", mods = "SHIFT", action = act.Multiple { act.CopyMode { SetSelectionMode = "Cell" }, act.CopyMode { MoveByPage = -0.5 } } })
-table.insert(copy_mode, { key = "PageDown", mods = "SHIFT", action = act.Multiple { act.CopyMode { SetSelectionMode = "Cell" }, act.CopyMode { MoveByPage = 0.5 } } })
+table.insert(copy_mode, { key = "PageUp", mods = "SHIFT", action = shift_move({ MoveByPage = -0.5 }) })
+table.insert(copy_mode, { key = "PageDown", mods = "SHIFT", action = shift_move({ MoveByPage = 0.5 }) })
 
--- Phím tắt tiện lợi: Enter hoặc y là copy và thoát ra ngay
-table.insert(copy_mode, { key = "Enter", mods = "NONE", action = act.Multiple { { CopyTo = "ClipboardAndPrimarySelection" }, { CopyMode = "Close" } } })
-table.insert(copy_mode, { key = "c", mods = "CTRL", action = act.CopyMode "Close" })
+-- Bắt đầu vùng chọn bằng v hoặc Space (như Vim / mặc định WezTerm)
+table.insert(copy_mode, {
+  key = "v",
+  mods = "NONE",
+  action = wezterm.action_callback(function(window, pane)
+    copy_mode_selecting = true
+    window:perform_action(act.CopyMode { SetSelectionMode = "Cell" }, pane)
+  end),
+})
+table.insert(copy_mode, {
+  key = "Space",
+  mods = "NONE",
+  action = wezterm.action_callback(function(window, pane)
+    copy_mode_selecting = true
+    window:perform_action(act.CopyMode { SetSelectionMode = "Cell" }, pane)
+  end),
+})
+
+-- Phím tắt copy vào Clipboard: Enter, y hoặc Ctrl + C đều copy và thoát
+table.insert(copy_mode, { key = "Enter", mods = "NONE", action = copy_and_close() })
+table.insert(copy_mode, { key = "y", mods = "NONE", action = copy_and_close() })
+table.insert(copy_mode, { key = "c", mods = "CTRL", action = copy_and_close() })
+
+-- Phím tắt thoát Copy Mode mà không copy: Esc hoặc q
+table.insert(copy_mode, { key = "Escape", mods = "NONE", action = close_copy_mode() })
+table.insert(copy_mode, { key = "q", mods = "NONE", action = close_copy_mode() })
 
 config.key_tables = {
   copy_mode = copy_mode,

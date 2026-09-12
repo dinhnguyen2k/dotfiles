@@ -64,3 +64,39 @@ Modern, aesthetic, and ultra-responsive WezTerm setup featuring:
 | `Shift + Arrow Keys` (in Copy Mode) | Highlight & select text |
 | `Enter` (in Copy Mode) | Copy selection to Clipboard & Exit |
 | `Ctrl + Shift + Space` | QuickSelect URLs, paths, commit hashes |
+
+---
+
+## 🌙 Neovim Setup (Rose-Pine Moon + Lazy.nvim)
+
+Modern, lightning-fast Neovim configuration seamlessly paired with Rose-Pine Moon theme:
+
+- **🎨 Theme**: Rose-Pine Moon (`rose-pine/neovim`) with 24-bit TrueColor.
+- **🚀 Plugin Manager**: `lazy.nvim` with locked reproducible states (`lazy-lock.json`).
+- **🔍 FZF-Lua**: High-performance fuzzy finder for files & code grep (synced with terminal `fn`).
+- **🌲 Neo-tree**: Sleek sidebar file explorer (`Space + e` to toggle).
+- **📝 Render Markdown**: Inline rich markdown preview with custom headings, code blocks, tables, and checkboxes.
+- **🌠 Smear Cursor**: Smooth animated morphing cursor trail (`sphamba/smear-cursor.nvim`).
+- **🐧 Penguin Pet**: Floating companion widget stepping across the status bar (`:Pet` or `Space + pp`).
+- **⌨️ Leader Key**: `Space` (Space + `f` for find, `e` for tree, `w` for save, `m` for markdown).
+
+### Neovim Installation
+Symlink or copy `nvim/` to `~/.config/nvim`:
+```bash
+ln -s ~/dotfiles/nvim ~/.config/nvim
+```
+
+### Key Neovim Shortcuts
+
+| Shortcut | Description |
+|---|---|
+| `<leader>ff` | Find files (FZF-Lua) |
+| `<leader>fg` / `<leader>fG` | Live Grep text in codebase |
+| `<leader>fb` | Open buffers list |
+| `<leader>e` | Toggle Neo-tree sidebar |
+| `<leader>m` | Toggle Markdown render |
+| `<leader>sc` | Toggle Smear cursor animation |
+| `<leader>pp` | Toggle Penguin Pet widget |
+| `<leader>w` / `<leader>q` | Quick save / Quick quit |
+| `<leader>n` or `F2` | Toggle line numbers |
+
